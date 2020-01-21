@@ -36,6 +36,8 @@
 extern int set_all_promisc();
 #endif
 
+#define DPDK 1
+
 #define int_ntoa(x)	inet_ntoa(*((struct in_addr *)&x))
 extern int ip_options_compile(unsigned char *);
 extern int raw_init();
@@ -581,6 +583,18 @@ static void cap_queue_process_thread()
 
 #endif
 
+#ifdef DPDK
+int nids_init()
+{
+    nids_linkoffset = 14;
+    init_procs();
+    tcp_init(nids_params.n_tcp_streams);
+    ip_frag_init(nids_params.n_hosts);
+    scan_init();
+
+    return 1;
+}
+#else
 int nids_init()
 {
     /* free resources that previous usages might have allocated */
@@ -680,6 +694,7 @@ int nids_init()
 
     return 1;
 }
+#endif
 
 int nids_run()
 {
