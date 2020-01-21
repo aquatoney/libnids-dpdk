@@ -14,6 +14,6 @@ clean:
 	cd samples; $(MAKE) $(AM_MAKEFLAGS) $@
 	
 distclean: clean
-	rm -f Makefile */Makefile */config.h config.status config.cache config.log *~ 
+	rm -f Makefile samples/Makefile */config.h config.status config.cache config.log *~ 
 
 # EOF
