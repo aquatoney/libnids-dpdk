@@ -14,6 +14,7 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/ip_icmp.h>
+#include <arpa/inet.h>
 
 #include "checksum.h"
 #include "scan.h"
@@ -706,15 +707,30 @@ void tcp_exit(void)
 }
 
 void
-process_tcp(u_char * data, int skblen)
+process_tcp(unsigned char* data, int skblen)
 {
+  // printf("Get into tcp (len=%d)\n", skblen);
+  // printf("data[0]: %.2x, data[1]: %.2x, data[2]: %.2x, data[3]: %.2x",
+  //         data[0], data[1], data[2], data[3]);
+  // printf("\n");
   struct ip *this_iphdr = (struct ip *)data;
+  // printf("middle3 nids ip hdr len: %u, ", 4 * this_iphdr->ip_hl);
+  // printf("middle3 nids src ip: %s, ", inet_ntoa(this_iphdr->ip_src));
+  // printf("middle3 nids dst ip: %s, ", inet_ntoa(this_iphdr->ip_dst));
+
+
   struct tcphdr *this_tcphdr = (struct tcphdr *)(data + 4 * this_iphdr->ip_hl);
   int datalen, iplen;
   int from_client = 1;
   unsigned int tmp_ts;
   struct tcp_stream *a_tcp;
   struct half_stream *snd, *rcv;
+
+  // printf("nids src port: %hu, ", ntohs(this_tcphdr->source));
+  // printf("nids dst port: %hu, ", ntohs(this_tcphdr->dest));
+  // printf("\n");
+
+
 
   ugly_iphdr = this_iphdr;
   iplen = ntohs(this_iphdr->ip_len);

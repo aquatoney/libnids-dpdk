@@ -42,26 +42,20 @@ tcp_callback (struct tcp_stream *a_tcp, void ** this_time_not_needed)
     // in this simple app we follow each stream, so..
       a_tcp->client.collect++; // we want data received by a client
       a_tcp->server.collect++; // and by a server, too
-      a_tcp->server.collect_urg++; // we want urgent data received by a
-                                   // server
-#ifdef WE_WANT_URGENT_DATA_RECEIVED_BY_A_CLIENT
-      a_tcp->client.collect_urg++; // if we don't increase this value,
-                                   // we won't be notified of urgent data
-                                   // arrival
-#endif
-      fprintf (stderr, "%s established\n", buf);
+
+      printf("%s established\n", buf);
       return;
     }
   if (a_tcp->nids_state == NIDS_CLOSE)
     {
       // connection has been closed normally
-      fprintf (stderr, "%s closing\n", buf);
+      printf("%s closing\n", buf);
       return;
     }
   if (a_tcp->nids_state == NIDS_RESET)
     {
       // connection has been closed by RST
-      fprintf (stderr, "%s reset\n", buf);
+      printf("%s reset\n", buf);
       return;
     }
 
@@ -96,7 +90,7 @@ tcp_callback (struct tcp_stream *a_tcp, void ** this_time_not_needed)
 	  hlf = &a_tcp->server; // analogical
 	  strcat (buf, "(->)");
 	}
-    fprintf(stderr,"%s",buf); // we print the connection parameters
+    printf("%s",buf); // we print the connection parameters
                               // (saddr, daddr, sport, dport) accompanied
                               // by data flow direction (-> or <-)
 
@@ -113,7 +107,7 @@ main ()
   // nids_params.n_hosts=256;
   if (!nids_init ())
   {
-  	fprintf(stderr,"%s\n",nids_errbuf);
+  	printf("%s\n",nids_errbuf);
   	exit(1);
   }
   nids_register_tcp (tcp_callback);

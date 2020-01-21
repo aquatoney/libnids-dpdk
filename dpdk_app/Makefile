@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 
 ### TARGET ###
+BUILD_DIR = ./build/
 APP = procpkts
 
 ### GCC ###
@@ -17,43 +18,36 @@ GCC_OPT += -DNDEBUG -O3 -DNETSTAT -DINFO -DDBGERR -DDBGCERR
 GCC_OPT += $(DBG_OPT)
 
 ### LIBRARIES AND INCLUDES ###
-INC_DIR = ../src
-INC= -I$(INC_DIR)
+
 
 ### SOURCE FILES ###
-SRCS = dpdk_main.c callback.c ../src/libnids.a
 
 ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
+NIDS_DIR = $(PWD)/../src
+# SRCS = main.c callback.c $(NIDS_DIR)/libnids.a
+SRCS =  main.c callback.c
+# SRCS += $(NIDS_DIR)/libnids.a
+SRCS += $(NIDS_DIR)/allpromisc.c $(NIDS_DIR)/hash.c $(NIDS_DIR)/ip_options.c \
+				$(NIDS_DIR)/checksum.c $(NIDS_DIR)/tcp.c $(NIDS_DIR)/libnids.c \
+				$(NIDS_DIR)/ip_fragment.c $(NIDS_DIR)/killtcp.c $(NIDS_DIR)/scan.c \
+				$(NIDS_DIR)/util.c 
 # DPDK LIBRARY and HEADER
 RTE_TARGET ?= x86_64-native-linuxapp-gcc
-DPDK_INC=$(RTE_SDK)/$(RTE_TARGET)/include
-DPDK_LIB=$(RTE_SDK)/$(RTE_TARGET)/lib/
+DPDK_INC = -I$(NIDS_DIR)
+# DPDK_INC=$(RTE_SDK)/$(RTE_TARGET)/include
+# DPDK_LIB=$(RTE_SDK)/$(RTE_TARGET)/lib/
 include $(RTE_SDK)/mk/rte.vars.mk
 
-DPDK_MACHINE_FLAGS=$(MACHINE_CFLAGS)
-DPDK_LIB_FLAGS = -ldpdk -ldl -lnuma -lpthread -lnids -lgthread-2.0 -lnsl -lpcap -lnet
+CFLAGS += -O3
+CFLAGS += $(DPDK_INC)
+CFLAGS += -DXL710
 
-INC += ${DPDK_MACHINE_FLAGS} -I${DPDK_INC} -include $(DPDK_INC)/rte_config.h
-LIBS += -L$(DPDK_LIB) -L$(INC_DIR)
-LIB_FLAGS += $(DPDK_LIB_FLAGS)
+CFLAGS += -D_BSD_SOURCE -DLIBNET_VER=-1 -DHAVE_ICMPHDR=1 -DHAVE_TCP_STATES=1 -DHAVE_BSD_UDPHDR=1
 
+SRCS-y := $(SRCS)
+include $(RTE_SDK)/mk/rte.extapp.mk
 
-### GOALS ###
-all: $(APP)
-
-$(APP): $(SRCS)
-	$(GCC) $(GCC_OPT) -o $@ $^ $(INC) $(LIBS) $(LIB_FLAGS)
-
-../src/libnids.a:
-	cd .. & ./configure --disable-libglib & $(MAKE) -C ..
-
-clean:
-	-$(RM) procpkts
-	$(MAKE) -C .. clean
-
-distclean: clean
-	$(MAKE) -C .. distclean
-
-.PHONY: all clean
+# $(NIDS_DIR)/libnids.a:
+# 	cd $(NIDS_DIR)/.. && ./configure --disable-libglib --disable-libnet && $(MAKE) -C .

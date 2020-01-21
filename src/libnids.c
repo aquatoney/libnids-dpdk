@@ -225,28 +225,17 @@ static void call_ip_frag_procs(void *data,bpf_u_int32 caplen)
 void nids_pcap_handler(u_char * par, struct pcap_pkthdr *hdr, u_char * data)
 {
     u_char *data_aligned;
-#ifdef HAVE_LIBGTHREAD_2_0
-    struct cap_queue_item *qitem;
-#endif
-#ifdef DLT_IEEE802_11
-    unsigned short fc;
-    int linkoffset_tweaked_by_prism_code = 0;
-    int linkoffset_tweaked_by_radio_code = 0;
-#endif
-
     /*
      * Check for savagely closed TCP connections. Might
      * happen only when nids_params.tcp_workarounds is non-zero;
      * otherwise nids_tcp_timeouts is always NULL.
      */
     if (NULL != nids_tcp_timeouts)
-      tcp_check_timeouts(&hdr->ts);
+        tcp_check_timeouts(&hdr->ts);
 
     nids_last_pcap_header = hdr;
     nids_last_pcap_data = data;
-    (void)par; /* warnings... */
-    switch (linktype) {
-    case DLT_EN10MB:
+
 	if (hdr->caplen < 14)
 	    return;
 	/* Only handle IP packets and 802.1Q VLAN tagged packets below. */
@@ -256,114 +245,36 @@ void nids_pcap_handler(u_char * par, struct pcap_pkthdr *hdr, u_char * data)
 	} else if (data[12] == 0x81 && data[13] == 0) {
 	    /* Skip 802.1Q VLAN and priority information */
 	    nids_linkoffset = 18;
-	} else
-	    /* non-ip frame */
-	    return;
-	break;
-#ifdef DLT_PRISM_HEADER
-#ifndef DLT_IEEE802_11
-#error DLT_PRISM_HEADER is defined, but DLT_IEEE802_11 is not ???
-#endif
-    case DLT_PRISM_HEADER:
-	nids_linkoffset = 144; //sizeof(prism2_hdr);
-	linkoffset_tweaked_by_prism_code = 1;
-        //now let DLT_IEEE802_11 do the rest
-#endif
-#ifdef DLT_IEEE802_11_RADIO
-    case DLT_IEEE802_11_RADIO:
-        // just get rid of the radio tap header
-        if (!linkoffset_tweaked_by_prism_code) {
-          nids_linkoffset = EXTRACT_LE_16BITS(data + 2); // skip radiotap header
-          linkoffset_tweaked_by_radio_code = 1;
-        }
-        //now let DLT_IEEE802_11 do the rest
-#endif
-#ifdef DLT_IEEE802_11
-    case DLT_IEEE802_11:
-	/* I don't know why frame control is always little endian, but it 
-	 * works for tcpdump, so who am I to complain? (wam)
-	 */
-	if (!linkoffset_tweaked_by_prism_code && !linkoffset_tweaked_by_radio_code)
-		nids_linkoffset = 0;
-	fc = EXTRACT_LE_16BITS(data + nids_linkoffset);
-	if (FC_TYPE(fc) != T_DATA || FC_WEP(fc)) {
-	    return;
-	}
-	if (FC_TO_DS(fc) && FC_FROM_DS(fc)) {
-	    /* a wireless distribution system packet will have another
-	     * MAC addr in the frame
-	     */
-	    nids_linkoffset += 30;
 	} else {
-	    nids_linkoffset += 24;
-	}
-	if (DATA_FRAME_IS_QOS(FC_SUBTYPE(fc)))
-	  nids_linkoffset += 2;
-	if (hdr->len < nids_linkoffset + LLC_FRAME_SIZE)
-	    return;
-	if (ETHERTYPE_IP !=
-	    EXTRACT_16BITS(data + nids_linkoffset + LLC_OFFSET_TO_TYPE_FIELD)) {
-	    /* EAP, LEAP, and other 802.11 enhancements can be 
-	     * encapsulated within a data packet too.  Look only at
-	     * encapsulated IP packets (Type field of the LLC frame).
-	     */
-	    return;
-	}
-	nids_linkoffset += LLC_FRAME_SIZE;
-	break;
-#endif
-    default:;
+        /* non-ip frame */
+        return;
     }
+	
     if (hdr->caplen < nids_linkoffset)
-	return;
+    	return;
 
 /*
 * sure, memcpy costs. But many EXTRACT_{SHORT, LONG} macros cost, too. 
 * Anyway, libpcap tries to ensure proper layer 3 alignment (look for
 * handle->offset in pcap sources), so memcpy should not be called.
 */
-#ifdef LBL_ALIGN
-    if ((unsigned long) (data + nids_linkoffset) & 0x3) {
-	data_aligned = alloca(hdr->caplen - nids_linkoffset + 4);
-	data_aligned -= (unsigned long) data_aligned % 4;
-	memcpy(data_aligned, data + nids_linkoffset, hdr->caplen - nids_linkoffset);
-    } else 
-#endif
-  data_aligned = data + nids_linkoffset;
+// #ifdef LBL_ALIGN
+//     if ((unsigned long) (data + nids_linkoffset) & 0x3) {
+// 	data_aligned = alloca(hdr->caplen - nids_linkoffset + 4);
+// 	data_aligned -= (unsigned long) data_aligned % 4;
+// 	memcpy(data_aligned, data + nids_linkoffset, hdr->caplen - nids_linkoffset);
+//     } else 
+// #endif
 
- #ifdef HAVE_LIBGTHREAD_2_0
-     if(nids_params.multiproc) { 
-        /* 
-         * Insert received fragment into the async capture queue.
-         * We hope that the overhead of memcpy 
-         * will be saturated by the benefits of SMP - mcree
-         */
-        qitem=malloc(sizeof(struct cap_queue_item));
-        if (qitem && (qitem->data=malloc(hdr->caplen - nids_linkoffset))) {
-          qitem->caplen=hdr->caplen - nids_linkoffset;
-          memcpy(qitem->data,data_aligned,qitem->caplen);
-          g_async_queue_lock(cap_queue);
-          /* ensure queue does not overflow */
-          if(g_async_queue_length_unlocked(cap_queue) > nids_params.queue_limit) {
-	    /* queue limit reached: drop packet - should we notify user via syslog? */
-	    free(qitem->data);
-	    free(qitem);
-	    } else {
-	    /* insert packet to queue */
-	    g_async_queue_push_unlocked(cap_queue,qitem);
-          }
-          g_async_queue_unlock(cap_queue);
-	}
-     } else { /* user requested simple passthru - no threading */
-        call_ip_frag_procs(data_aligned,hdr->caplen - nids_linkoffset);
-     }
- #else
-     call_ip_frag_procs(data_aligned,hdr->caplen - nids_linkoffset);
- #endif
+  data_aligned = data + nids_linkoffset;
+  // printf("Handling data from %d with %u bytes\n", nids_linkoffset, hdr->caplen);
+  // printf("Ready to call ip_frag procs\n");
+  call_ip_frag_procs(data_aligned, hdr->caplen - nids_linkoffset);
 }
 
 static void gen_ip_frag_proc(u_char * data, int len)
-{
+{   
+    // printf("Get into ip_frag_proc\n");
     struct proc_node *i;
     struct ip *iph = (struct ip *) data;
     int need_free = 0;
@@ -371,8 +282,8 @@ static void gen_ip_frag_proc(u_char * data, int len)
     void (*glibc_syslog_h_workaround)(int, int, struct ip *, void*)=
         nids_params.syslog;
 
-    if (!nids_params.ip_filter(iph, len))
-	return;
+ //    if (!nids_params.ip_filter(iph, len))
+	// return;
 
     if (len < (int)sizeof(struct ip) || iph->ip_hl < 5 || iph->ip_v != 4 ||
 	ip_fast_csum((unsigned char *) iph, iph->ip_hl) != 0 ||
@@ -402,10 +313,14 @@ static void gen_ip_frag_proc(u_char * data, int len)
     skblen = (skblen + 15) & ~15;
     skblen += nids_params.sk_buff_size;
 
+    // printf("middle nids src ip: %s, ", inet_ntoa(iph->ip_src));
+    // printf("middle nids dst ip: %s, ", inet_ntoa(iph->ip_dst));
+    // printf("\n");
+
     for (i = ip_procs; i; i = i->next)
-	(i->item) (iph, skblen);
+    	(i->item) (iph, skblen);
     if (need_free)
-	free(iph);
+    	free(iph);
 }
 
 #if HAVE_BSD_UDPHDR
@@ -448,21 +363,36 @@ static void process_udp(char *data)
     }
 }
 static void gen_ip_proc(u_char * data, int skblen)
-{
-    switch (((struct ip *) data)->ip_p) {
-    case IPPROTO_TCP:
-	process_tcp(data, skblen);
-	break;
-    case IPPROTO_UDP:
-	process_udp((char *)data);
-	break;
-    case IPPROTO_ICMP:
-	if (nids_params.n_tcp_streams)
-	    process_icmp(data);
-	break;
-    default:
-	break;
+{   
+    // printf("Get into ip_proc\n");
+    struct ip* iph = (struct ip*)data;
+    // printf("middle2 nids ip hdr len: %u, ", 4 * iph->ip_hl);
+    // printf("middle2 nids ip proto: %u, ", iph->ip_p);
+    // printf("middle2 nids src ip: %s, ", inet_ntoa(iph->ip_src));
+    // printf("middle2 nids dst ip: %s, ", inet_ntoa(iph->ip_dst));
+    // printf("middle2 nids skblen = %d\n", skblen);
+    // printf("middle2 data[0]: %.2x, data[1]: %.2x, data[2]: %.2x, data[3]: %.2x",
+    //         data[0], data[1], data[2], data[3]);
+    // printf("\n");
+
+    switch (iph->ip_p) {
+    case IPPROTO_TCP: {
+        // printf("middle2.5 data[0]: %.2x, data[1]: %.2x, data[2]: %.2x, data[3]: %.2x",
+        //         data[0], data[1], data[2], data[3]);
+        // printf("\n");
+    	process_tcp(data, skblen);
+    	break;
     }
+ //    case IPPROTO_UDP:
+	// process_udp((char *)data);
+	// break;
+ //    case IPPROTO_ICMP:
+	// if (nids_params.n_tcp_streams)
+	//     process_icmp(data);
+	// break;
+    default: break;
+    }
+    // printf("Leaving ip_proc\n");
 }
 static void init_procs()
 {
@@ -583,8 +513,7 @@ static void cap_queue_process_thread()
 
 #endif
 
-#ifdef DPDK
-int nids_init()
+int nids_init_dpdk()
 {
     nids_linkoffset = 14;
     init_procs();
@@ -592,9 +521,12 @@ int nids_init()
     ip_frag_init(nids_params.n_hosts);
     scan_init();
 
+    if (nids_params.syslog == nids_syslog)
+        openlog("libnids", 0, LOG_LOCAL0);
+    
     return 1;
 }
-#else
+
 int nids_init()
 {
     /* free resources that previous usages might have allocated */
@@ -694,7 +626,6 @@ int nids_init()
 
     return 1;
 }
-#endif
 
 int nids_run()
 {

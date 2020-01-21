@@ -144,6 +144,7 @@ struct tcp_timeout
 };
 
 int nids_init (void);
+int nids_init_dpdk (void);
 void nids_register_ip_frag (void (*));
 void nids_unregister_ip_frag (void (*));
 void nids_register_ip (void (*));

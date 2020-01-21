@@ -61,6 +61,8 @@
 #define PARAM_PROC_ID "proc-id"
 #define PARAM_NUM_PROCS "num-procs"
 
+// #define NIDS_DEBUG 1
+
 /* for each lcore, record the elements of the ports array to use */
 struct lcore_ports{
   unsigned start_port;
@@ -440,6 +442,7 @@ lcore_main(__attribute__((unused)) void *arg1)
           struct rte_mbuf* cur_buf = buf[j];
 #ifdef NIDS_DEBUG
           unsigned char* eth_hdr = rte_pktmbuf_mtod(cur_buf, unsigned char*);
+          unsigned eth_len = rte_pktmbuf_pkt_len(cur_buf);
           /* IPv4 only */
           if (eth_hdr[12] != 0x08 || eth_hdr[13] != 0x00) continue;
           struct iphdr* ip_hdr = (struct iphdr*)(eth_hdr+14);
@@ -457,10 +460,14 @@ lcore_main(__attribute__((unused)) void *arg1)
           printf("src port: %hu, ", ntohs(sport));
           printf("dst ip: %s, ", inet_ntoa(addr2));
           printf("dst port: %hu, ", ntohs(dport));
+          printf("pkt len = %u, ", eth_len);
           printf("rss hash = %u", cur_buf->hash.rss);
+          printf("\n");
 #endif
           unsigned char* pkt_buf = rte_pktmbuf_mtod(cur_buf, unsigned char*);
-          unsigned pkt_len = rte_pktmbuf_pkt_len(cur_buf);
+          int pkt_len = rte_pktmbuf_pkt_len(cur_buf);
+          if (pkt_buf[12] != 0x08 || pkt_buf[13] != 0x00) continue;
+          if (pkt_len < 64) continue;
 
           struct timeval now;
           gettimeofday(&now, NULL);
