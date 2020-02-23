@@ -62,6 +62,12 @@
 #define PARAM_NUM_PROCS "num-procs"
 
 // #define NIDS_DEBUG 1
+#define PERF_DEBUG 1
+#ifdef PERF_DEBUG
+#include <time.h>
+#include <sys/time.h>
+#endif
+
 
 /* for each lcore, record the elements of the ports array to use */
 struct lcore_ports{
@@ -206,6 +212,9 @@ set_xl710_nic(uint16_t port)
       printf("RTE_ETH_FILTER_HASH not supported on port: %d\n", port);
       return ret;
   }
+  else {
+      printf("XL710 is proporly set.\n");
+  }
 
   memset(&info, 0, sizeof(info));
   info.info_type = RTE_ETH_HASH_FILTER_GLOBAL_CONFIG;
@@ -213,7 +222,7 @@ set_xl710_nic(uint16_t port)
 
   // see drivers/net/i40e/i40e_ethdev.c, I40E_FLOW_TYPES, for all flow types
   // supported by i40 driver (XL710)
-  //set_flow_type_mask(&info, RTE_ETH_FLOW_IPV4);
+  // set_flow_type_mask(&info, RTE_ETH_FLOW_IPV4);
   // set_flow_type_mask(&info, RTE_ETH_FLOW_FRAG_IPV4);
   // set_flow_type_mask(&info, RTE_ETH_FLOW_NONFRAG_IPV4_OTHER);
   //set_flow_type_mask(&info, RTE_ETH_FLOW_IPV6);
@@ -268,8 +277,11 @@ smp_port_init(uint16_t port, struct rte_mempool *mbuf_pool,
           .rss_key = seed,
           .rss_key_len = sizeof(seed),
           // .rss_hf = ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP,
+#ifdef XL710
           .rss_hf = ETH_RSS_NONFRAG_IPV4_TCP,
-          // .rss_hf = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP | ETH_RSS_L2_PAYLOAD
+#else
+          .rss_hf = ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_IP | ETH_RSS_L2_PAYLOAD
+#endif
         },
       },
       .txmode = {
@@ -381,13 +393,29 @@ assign_ports_to_cores(void)
   }
 }
 
-/* DPDKUser */
-// typedef struct {
-//     WV_Runtime *runtime;
-//     unsigned port;
-// } DPDKUser;
+#ifdef PERF_DEBUG
+unsigned long pkt_id = 0;
+unsigned long long pkt_vol = 0;
+struct timeval now;
+struct timeval milestone;
+#define PERF_AVG_NUM 10
+double throughputs[PERF_AVG_NUM];
+#endif
 
-// DPDKUser* dpdk_user;
+static void
+print_avg_throughput()
+{
+	double total = 0.0;
+	int i;
+	int r = 0;
+	for (i=0; i<PERF_AVG_NUM; i++) {
+		if (throughputs[i] <= 0) continue;
+		r++;
+		total += throughputs[i];
+	}
+	const unsigned id = rte_lcore_id();
+	printf("Lcore %d, Throughput: %lfGbps (last %d avg.)\n", id, (double)total/r, r);
+}
 
 /* Main function used by the processing threads.
  * Prints out some configuration details for the thread and then begins
@@ -408,6 +436,9 @@ lcore_main(__attribute__((unused)) void *arg1)
     printf("Lcore %u has nothing to do\n", id);
     return 0;
   }
+  
+  memset(throughputs, 0, sizeof(double)*PERF_AVG_NUM);
+  int perf_index = 0;
 
   /* build up message in msgbuf before printing to decrease likelihood
    * of multi-core message interleaving.
@@ -440,6 +471,24 @@ lcore_main(__attribute__((unused)) void *arg1)
       uint16_t j;
       for (j = 0 ;j < rx_c; j++) {
           struct rte_mbuf* cur_buf = buf[j];
+#ifdef PERF_DEBUG
+          pkt_vol += rte_pktmbuf_pkt_len(cur_buf);
+          if (pkt_id++ > 5000000) {
+             gettimeofday(&now, NULL);
+                                        time_t s = now.tv_sec - milestone.tv_sec;
+                                        suseconds_t u = s * 1000000 + now.tv_usec - milestone.tv_usec;
+                                        double throughput = (double)8000000*pkt_vol/(u*1000*1000*1000);
+                                        // printf("time: %luus, pkt: %lu, vol: %lld, ", u, pkt_id, pkt_vol);
+                                        //printf("Lcore %d, Throughput: %lfGbps\n", id, throughput);
+					throughputs[perf_index] = throughput;
+					print_avg_throughput();
+                                        milestone.tv_sec = now.tv_sec;
+                                        milestone.tv_usec = now.tv_usec;
+                                        pkt_id = 0;
+                                        pkt_vol = 0;
+					perf_index = (perf_index+1) % PERF_AVG_NUM;
+                                }
+#endif
 #ifdef NIDS_DEBUG
           unsigned char* eth_hdr = rte_pktmbuf_mtod(cur_buf, unsigned char*);
           unsigned eth_len = rte_pktmbuf_pkt_len(cur_buf);
@@ -475,10 +524,9 @@ lcore_main(__attribute__((unused)) void *arg1)
           nids_pcap_handler(NULL, &hdr, pkt_buf);
 
 
-          // WV_Runtime *runtime = dpdk_user->runtime;
           // WV_ByteSlice packet = { .cursor = pkt_buf, .length = pkt_len };
           // WV_U8 status = WV_ProcessPacket(packet, runtime);
-          // WV_ProfileRecord(WV_GetProfile(runtime), pkt_len, status);
+          // WV_ProfileRecord(dpdk_profile, pkt_len, 0);
       }
 
       const uint16_t tx_c = rte_eth_tx_burst(dst, q_id, buf, rx_c);
@@ -611,7 +659,7 @@ main(int argc, char **argv)
 
   // DPDKUser user = { .runtime = runtime, .port = 0 };
   // dpdk_user = &user;
-  // WV_ProfileStart(WV_GetProfile(runtime));
+  // WV_ProfileStart(dpdk_profile);
 
   if (!nids_init ())
   {
@@ -619,6 +667,10 @@ main(int argc, char **argv)
     exit(1);
   }
   nids_register_tcp (tcp_callback);
+
+#ifdef PERF_DEBUG
+  gettimeofday(&milestone, NULL);
+#endif
   
   rte_eal_mp_remote_launch(lcore_main, NULL, CALL_MASTER);
 
