@@ -1,4 +1,5 @@
 #include "callback.h"
+#include <string.h>
 #include <arpa/inet.h>
 
 #define int_ntoa(x)	inet_ntoa(*((struct in_addr *)&x))

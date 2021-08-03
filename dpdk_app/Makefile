@@ -1,53 +1,59 @@
-SHELL := /bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright(c) 2010-2014 Intel Corporation
 
+# binary name
+APP = nids
 
-### TARGET ###
-BUILD_DIR = ./build/
-APP = procpkts
-
-### GCC ###
-GCC = gcc
-GCC_OPT = -m64 # -Wall -DNEWEV -Werror
-
-#DBG_OPT = -DDBGMSG -DDBGFUNC -DSTREAM -DSTATE -DTSTAT -DAPP -DEPOLL
-#DBG_OPT = -DDBGMSG -DDBGFUNC -DSTREAM -DSTATE
-#DBG_OPT += -DPKTDUMP
-#DBG_OPT += -DDUMP_STREAM
-#GCC_OPT += -g -DNETSTAT -DINFO -DDBGERR -DDBGCERR
-GCC_OPT += -DNDEBUG -O3 -DNETSTAT -DINFO -DDBGERR -DDBGCERR
-GCC_OPT += $(DBG_OPT)
-
-### LIBRARIES AND INCLUDES ###
-
-
-### SOURCE FILES ###
-
-ifeq ($(RTE_SDK),)
-$(error "Please define RTE_SDK environment variable")
-endif
 NIDS_DIR = $(PWD)/../src
-# SRCS = main.c callback.c $(NIDS_DIR)/libnids.a
-SRCS =  main.c callback.c
-# SRCS += $(NIDS_DIR)/libnids.a
-SRCS += $(NIDS_DIR)/allpromisc.c $(NIDS_DIR)/hash.c $(NIDS_DIR)/ip_options.c \
-				$(NIDS_DIR)/checksum.c $(NIDS_DIR)/tcp.c $(NIDS_DIR)/libnids.c \
-				$(NIDS_DIR)/ip_fragment.c $(NIDS_DIR)/killtcp.c $(NIDS_DIR)/scan.c \
-				$(NIDS_DIR)/util.c 
-# DPDK LIBRARY and HEADER
-RTE_TARGET ?= x86_64-native-linuxapp-gcc
-DPDK_INC = -I$(NIDS_DIR)
-# DPDK_INC=$(RTE_SDK)/$(RTE_TARGET)/include
-# DPDK_LIB=$(RTE_SDK)/$(RTE_TARGET)/lib/
-include $(RTE_SDK)/mk/rte.vars.mk
+# all source are stored in SRCS-y
+SRCS-y := main.c callback.c
+SRCS-y += $(NIDS_DIR)/allpromisc.c $(NIDS_DIR)/hash.c $(NIDS_DIR)/ip_options.c \
+		$(NIDS_DIR)/checksum.c $(NIDS_DIR)/tcp.c $(NIDS_DIR)/libnids.c \
+		$(NIDS_DIR)/ip_fragment.c $(NIDS_DIR)/killtcp.c $(NIDS_DIR)/scan.c \
+		$(NIDS_DIR)/util.c 
 
-CFLAGS += -O3
-CFLAGS += $(DPDK_INC)
-CFLAGS += -DXL710
+# Build using pkg-config variables if possible
+ifneq ($(shell pkg-config --exists libdpdk && echo 0),0)
+$(error "no installation of DPDK found")
+endif
 
+all: shared
+.PHONY: shared static
+shared: build/$(APP)-shared
+	ln -sf $(APP)-shared build/$(APP)
+static: build/$(APP)-static
+	ln -sf $(APP)-static build/$(APP)
+
+PKGCONF ?= pkg-config
+
+PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
+CFLAGS += -O3 -g $(shell $(PKGCONF) --cflags libdpdk)
+# Add flag to allow experimental API as l2fwd uses rte_ethdev_set_ptype API
+CFLAGS += -DALLOW_EXPERIMENTAL_API
+LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk)
+LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk)
+LDFLAGS += -lpcap
+CFLAGS += -I$(NIDS_DIR)
 CFLAGS += -D_BSD_SOURCE -DLIBNET_VER=-1 -DHAVE_ICMPHDR=1 -DHAVE_TCP_STATES=1 -DHAVE_BSD_UDPHDR=1
 
-SRCS-y := $(SRCS)
-include $(RTE_SDK)/mk/rte.extapp.mk
+ifeq ($(MAKECMDGOALS),static)
+# check for broken pkg-config
+ifeq ($(shell echo $(LDFLAGS_STATIC) | grep 'whole-archive.*l:lib.*no-whole-archive'),)
+$(warning "pkg-config output list does not contain drivers between 'whole-archive'/'no-whole-archive' flags.")
+$(error "Cannot generate statically-linked binaries with this version of pkg-config")
+endif
+endif
 
-# $(NIDS_DIR)/libnids.a:
-# 	cd $(NIDS_DIR)/.. && ./configure --disable-libglib --disable-libnet && $(MAKE) -C .
+build/$(APP)-shared: $(SRCS-y) Makefile $(PC_FILE) | build
+	$(CC) $(CFLAGS) $(SRCS-y) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
+
+build/$(APP)-static: $(SRCS-y) Makefile $(PC_FILE) | build
+	$(CC) $(CFLAGS) $(SRCS-y) -o $@ $(LDFLAGS) $(LDFLAGS_STATIC)
+
+build:
+	@mkdir -p $@
+
+.PHONY: clean
+clean:
+	rm -f build/$(APP) build/$(APP)-static build/$(APP)-shared
+	test -d build && rmdir -p build || true
