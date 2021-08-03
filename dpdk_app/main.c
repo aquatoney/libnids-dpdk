@@ -117,7 +117,7 @@ struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 
 #define MAX_TIMER_PERIOD 86400 /* 1 day max */
 /* A tsc-based timer responsible for triggering statistics printout */
-static uint64_t timer_period = 10; /* default period is 10 seconds */
+static uint64_t timer_period = 2; /* default period is 10 seconds */
 
 /* Print out statistics on packets dropped */
 static void print_stats(void)
@@ -211,13 +211,15 @@ static void l2fwd_mac_updating(struct rte_mbuf *m, unsigned dest_portid)
     void *tmp;
 
     eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-
+    
     /* 02:00:00:00:00:xx */
     tmp = &eth->d_addr.addr_bytes[0];
-    *((uint64_t *)tmp) = 0x000000000002 + ((uint64_t)dest_portid << 40);
+    *((uint64_t *)tmp) = 0x31e81471f3d2 + ((uint64_t)dest_portid << 40);
+
+    // rte_ether_addr_copy(&eth->s_addr, &eth->d_addr);
 
     /* src addr */
-    rte_ether_addr_copy(&l2fwd_ports_eth_addr[dest_portid], &eth->s_addr);
+    // rte_ether_addr_copy(&l2fwd_ports_eth_addr[dest_portid], &eth->s_addr);
 }
 
 static void l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
@@ -336,25 +338,29 @@ static void l2fwd_main_loop(void)
                 for (int j = 0; j < nb_rx; j++)
                     rcv_byte_num += pkts_burst[j]->pkt_len;
             }
-
+            
+            int dst_port = l2fwd_dst_ports[portid];
             for (j = 0; j < nb_rx; j++) {
                 m = pkts_burst[j];
-                pkt_vol += rte_pktmbuf_pkt_len(m);
 
                 unsigned char *pkt_buf = rte_pktmbuf_mtod(m, unsigned char *);
-                unsigned pkt_len = rte_pktmbuf_pkt_len(m);
+                unsigned pkt_len = rte_pktmbuf_pkt_len(m) - 10;
 
                 struct timeval cur_time;
                 gettimeofday(&cur_time, NULL);
                 struct pcap_pkthdr hdr = {.ts = cur_time, .caplen = pkt_len, .len = pkt_len};
                 nids_pcap_handler(NULL, &hdr, pkt_buf);
 
-                // rte_prefetch0(rte_pktmbuf_mtod(m, void *));
-                // l2fwd_simple_forward(m, portid);
+//                if (mac_updating)
+//                    l2fwd_mac_updating(m, dst_port);
+
+                rte_prefetch0(rte_pktmbuf_mtod(m, void *));
+                l2fwd_simple_forward(m, portid);
             }
 
-            int dst_port = l2fwd_dst_ports[portid];
-            int sent = rte_eth_tx_burst(dst_port, 0, pkts_burst, MAX_PKT_BURST);
+            // int dst_port = l2fwd_dst_ports[portid];
+            //int sent = rte_eth_tx_burst(dst_port, 0, pkts_burst, nb_rx);
+            int sent = nb_rx;
             if (sent) {
                 port_statistics[dst_port].tx += sent;
                 send_pkt_num += sent;
@@ -997,6 +1003,12 @@ int main(int argc, char **argv)
     check_all_ports_link_status(l2fwd_enabled_port_mask);
 
     gettimeofday(&milestone, NULL);
+     if (!nids_init ())
+  {
+    fprintf(stderr, "libnids init error\n");
+    exit(1);
+  }
+  nids_register_tcp (tcp_callback);
 
     ret = 0;
     /* launch per-lcore init on every lcore */
